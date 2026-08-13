@@ -7,6 +7,7 @@ import asyncio
 import os
 import json
 import flet_permission_handler as fph
+from Tts import get_tts
 #from jnius import autoclass
 
 
@@ -61,18 +62,16 @@ If you encounter any bugs or would like to suggest a new feature, please don't h
 
 ## 👨‍💻 Contact Options
 
-### **Solomon Ndegwa**
-- 💬 **WhatsApp** – [Click to chat](https://wa.me/254769255782)  
-- 📞 **Phone call** – [Call Solomon](tel:+254769255782)
 
-### **Zaim Maalim Sheali (Zaim Tech)**
+### **Zaim Sheali (Zaim Tech)**
 - 💬 **WhatsApp** – [Click to chat](https://wa.me/254702100103)  
 - 📞 **Phone call** – [Call Zaim](tel:+254702100103)  
 - 📷 **Instagram** – [@king_zaim001](https://instagram.com/king_zaim001) (Tap to DM or follow)
 
 ---
-
-> **Tip:** Clicking any of the links above will directly open WhatsApp, your phone dialer, or Instagram – making it easy to get in touch.
+```
+click the links above to reach out directly. We value your input and are committed to improving our app based on your feedback.
+```
 
 We appreciate your feedback and look forward to improving the experience for everyone! 🙌
 """
@@ -911,8 +910,7 @@ We appreciate your feedback and look forward to improving the experience for eve
                         )
                         self._send_notification_with_fallback(notif, f"Grade: {grade}")
                         self._show_class_dialog(day_name, current_time_str, subject, grade)
-                        
-                        #self.TextToSpeech(f"Your {subject} class for {grade} is starting now.")
+                        get_tts().speak(f"Your {subject} class for {grade} is starting now.")
 
                     try:
                         self._schedule_exact_alarm(nt_id, schld_time, subject, grade)
