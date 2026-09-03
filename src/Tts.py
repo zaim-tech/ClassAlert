@@ -1,6 +1,7 @@
 """Small Android Text-to-Speech wrapper with a desktop console fallback."""
 
 import sys
+import os
 
 
 _tts_instance = None
@@ -43,12 +44,23 @@ class TTSEngine:
         try:
             self._TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
             self._Locale = autoclass("java.util.Locale")
-            try:
-                activity = autoclass("org.kivy.android.PythonActivity").mActivity
-            except Exception:
-                activity = autoclass(
-                    "android.app.ActivityThread"
-                ).currentActivityThread().getApplication()
+            activity = None
+            activity_names = [
+                os.getenv("MAIN_ACTIVITY_HOST_CLASS_NAME"),
+                "org.flet.app.FletActivity",
+                "org.kivy.android.PythonActivity",
+            ]
+            for activity_name in activity_names:
+                if not activity_name:
+                    continue
+                try:
+                    activity = autoclass(activity_name).mActivity
+                    if activity is not None:
+                        break
+                except Exception:
+                    continue
+            if activity is None:
+                raise RuntimeError("No compatible Android activity found")
         except Exception as exc:
             print("[TTS] Could not resolve Android context:", exc)
             return
@@ -68,11 +80,17 @@ class TTSEngine:
                     outer.initialized = True
                     outer._apply_lang()
                     if outer.on_ready_callback:
-                        outer.on_ready_callback()
+                        try:
+                            outer.on_ready_callback()
+                        except Exception as exc:
+                            print("TTS ready callback error:", exc)
                     if outer._pending:
                         text = outer._pending
                         outer._pending = None
-                        outer._speak_now(text)
+                        try:
+                            outer._speak_now(text)
+                        except Exception as exc:
+                            print("TTS pending speech error:", exc)
 
         self._listener = OnInitListener()
         self.tts = self._TextToSpeech(activity, self._listener)
