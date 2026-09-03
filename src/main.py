@@ -22,6 +22,7 @@ class ClassAlert:
     def __init__(self, page: ft.Page):
         self.page = page
         self._last_handled_alarm_signature = None
+        self.tts = get_tts()
         self.page.scroll = ft.ScrollMode.HIDDEN
         self.page.theme_mode = self._load_theme_mode()
 
@@ -710,6 +711,15 @@ We appreciate your feedback and look forward to improving the experience for eve
             notif = self._build_alarm_notification(notification_id, title, body, use_custom_sound=False)
             self._send_notification_with_fallback(notif, body)
 
+            # The alarm may have started the app from the background. Speak here
+            # instead of relying on the timetable refresh path to run first.
+            try:
+                self.tts.speak(
+                    f"Your {title}. {body}"
+                )
+            except Exception as tts_error:
+                print(f"TTS alarm error: {tts_error}")
+
             if target_record is not None:
                 class_time = target_record.get("class_time", datetime.now())
                 self._show_class_dialog(
@@ -793,6 +803,13 @@ We appreciate your feedback and look forward to improving the experience for eve
                 test,
                 "If you see this, notifications are working!",
             )
+
+            try:
+                self.tts.speak(
+                    "This is a test notification. If you can hear this, text to speech is working."
+                )
+            except Exception as tts_error:
+                print(f"TTS test error: {tts_error}")
             
             #self.TextToSpeech("This is a test notification. If you see this, notifications are working!")
             self.page.show_dialog(ft.SnackBar(
@@ -910,7 +927,6 @@ We appreciate your feedback and look forward to improving the experience for eve
                         )
                         self._send_notification_with_fallback(notif, f"Grade: {grade}")
                         self._show_class_dialog(day_name, current_time_str, subject, grade)
-                        get_tts().speak(f"Your {subject} class for {grade} is starting now.")
 
                     try:
                         self._schedule_exact_alarm(nt_id, schld_time, subject, grade)
