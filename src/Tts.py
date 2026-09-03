@@ -1,120 +1,175 @@
-"""
-Android Native Text-to-Speech Library for Flet / Python applications.
-Interacts directly with the Android SDK using PyJNIus without Kivy bindings.
-"""
+"""Small Android Text-to-Speech wrapper with a desktop console fallback."""
 
 import sys
 
-# Global tracking variable to maintain a single engine context across your app
+
 _tts_instance = None
 
 
-class AndroidTTS:
-    def __init__(self, on_ready_callback=None):
-        """
-        Initializes the Android Text-to-Speech Engine asynchronously.
-        :param on_ready_callback: Optional function to run when the engine finishes initializing.
-        """
-        self.initialized = False
-        self.tts = None
-        self._pending_message = None
-        self.on_ready_callback = on_ready_callback
+class TTSEngine:
+    """Wrap Android TextToSpeech; print text when running outside Android."""
 
-        # Safely detect if the code is executing on an Android environment
-        self.is_android = hasattr(sys, 'getandroidapi') or 'android' in sys.platform.lower()
+    def __init__(self, on_ready_callback=None):
+        self.tts = None
+        self.ready = False
+        self.initialized = False  # Backwards-compatible name.
+        self._pending = None
+        self._lang = "en"
+        self._TextToSpeech = None
+        self._Locale = None
+        self._listener = None
+        self.on_ready_callback = on_ready_callback
+        self.is_android = (
+            hasattr(sys, "getandroidapi")
+            or "android" in sys.platform.lower()
+        )
 
         if self.is_android:
-            from jnius import autoclass, PythonJavaClass, java_method
-
-            # Step 1: Dynamically locate the running Android Context Activity
-            try:
-                # Flet / Standard Python-for-Android bootstrap activity location
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                current_activity = PythonActivity.mActivity
-            except Exception:
-                try:
-                    # Alternative backend fallback context locator
-                    Context = autoclass('android.app.ActivityThread').currentActivityThread().getApplication()
-                    current_activity = Context
-                except Exception as e:
-                    print(f"[AndroidTTS] Critical: Could not resolve Android context activity. {e}")
-                    current_activity = None
-
-            # Step 2: Implement the asynchronous Java Listener interface
-            class OnInitListener(PythonJavaClass):
-                __javainterfaces__ = ['android/speech/tts/TextToSpeech$OnInitListener']
-
-                def __init__(self, parent):
-                    super().__init__()
-                    self.parent = parent
-
-                @java_method('(I)V')
-                def onInit(self, status):
-                    # Status 0 represents TextToSpeech.SUCCESS
-                    if status == 0:
-                        self.parent.initialized = True
-                        
-                        # Apply standard system language (US English)
-                        Locale = autoclass('java.util.Locale')
-                        self.parent.tts.setLanguage(Locale.US)
-                        
-                        # Trigger optional application notification hook
-                        if self.parent.on_ready_callback:
-                            self.parent.on_ready_callback()
-                        
-                        # Dispatch any speech string buffered during startup
-                        if self.parent._pending_message:
-                            self.parent.speak(self.parent._pending_message)
-                            self.parent._pending_message = None
-
-            # Step 3: Instantiate the Java TextToSpeech engine
-            if current_activity:
-                TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
-                self.listener = OnInitListener(self)
-                self.tts = TextToSpeech(current_activity, self.listener)
-            else:
-                print("[AndroidTTS] Error: Engine instantiation aborted due to missing context.")
+            self._init_android()
         else:
-            # Local Desktop Development Fallback Mode
-            print("[AndroidTTS Module] Non-Android system detected. Running in console mock mode.")
+            print("[TTS preview] Non-Android system detected. Console mode.")
+            self.ready = True
             self.initialized = True
             if self.on_ready_callback:
                 self.on_ready_callback()
 
-    def speak(self, text: str):
-        """Speaks the input text string. Overwrites currently playing speech tracks."""
-        if not text:
+    def _init_android(self):
+        try:
+            from jnius import autoclass, PythonJavaClass, java_method
+        except Exception as exc:
+            print("pyjnius unavailable:", exc)
             return
 
-        if self.is_android:
-            if self.initialized and self.tts:
-                # 0 = TextToSpeech.QUEUE_FLUSH (Interrupts active speech for immediate output)
-                self.tts.speak(text, 0, None, "flet_tts_audio_channel")
-            else:
-                # Buffer the message if initialization is still working in the background
-                self._pending_message = text
-        else:
-            print(f"[Desktop Mock Output]: {text}")
+        try:
+            self._TextToSpeech = autoclass("android.speech.tts.TextToSpeech")
+            self._Locale = autoclass("java.util.Locale")
+            try:
+                activity = autoclass("org.kivy.android.PythonActivity").mActivity
+            except Exception:
+                activity = autoclass(
+                    "android.app.ActivityThread"
+                ).currentActivityThread().getApplication()
+        except Exception as exc:
+            print("[TTS] Could not resolve Android context:", exc)
+            return
+
+        outer = self
+
+        class OnInitListener(PythonJavaClass):
+            __javainterfaces__ = [
+                "android/speech/tts/TextToSpeech$OnInitListener"
+            ]
+            __javacontext__ = "app"
+
+            @java_method("(I)V")
+            def onInit(self, status):
+                if status == 0:  # TextToSpeech.SUCCESS
+                    outer.ready = True
+                    outer.initialized = True
+                    outer._apply_lang()
+                    if outer.on_ready_callback:
+                        outer.on_ready_callback()
+                    if outer._pending:
+                        text = outer._pending
+                        outer._pending = None
+                        outer._speak_now(text)
+
+        self._listener = OnInitListener()
+        self.tts = self._TextToSpeech(activity, self._listener)
+
+    def _apply_lang(self):
+        if not self.tts or not self._Locale:
+            return
+        locale = (
+            self._Locale.SIMPLIFIED_CHINESE
+            if self._lang == "zh"
+            else self._Locale.US
+        )
+        try:
+            self.tts.setLanguage(locale)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _detect_lang(text):
+        return "zh" if any("\u4e00" <= ch <= "\u9fff" for ch in text) else "en"
+
+    def _speak_now(self, text):
+        try:
+            self.tts.speak(
+                text,
+                self._TextToSpeech.QUEUE_FLUSH,
+                None,
+                "tts1",
+            )
+            return True
+        except Exception as exc:
+            print("tts.speak error:", exc)
+            return False
+
+    def speak(self, text):
+        text = (text or "").strip()
+        if not text:
+            return False
+
+        lang = self._detect_lang(text)
+        if lang != self._lang:
+            self._lang = lang
+            if self.ready:
+                self._apply_lang()
+
+        if not self.is_android:
+            try:
+                print("[TTS preview] ({}) {}".format(lang, text))
+            except UnicodeEncodeError:
+                # Some Windows terminals use an encoding that cannot display CJK.
+                print("[TTS preview] ({}) {}".format(lang, text.encode("ascii", "backslashreplace").decode("ascii")))
+            return True
+        if not self.ready:
+            self._pending = text
+            return False
+        return self._speak_now(text)
 
     def stop(self):
-        """Immediately silences the ongoing audio stream."""
-        if self.is_android and self.initialized and self.tts:
-            self.tts.stop()
+        if self.tts and self.ready:
+            try:
+                self.tts.stop()
+            except Exception:
+                pass
 
-    def set_rate(self, rate: float):
-        """Sets the audio voice tempo speed. Standard baseline speed is 1.0."""
-        if self.is_android and self.initialized and self.tts:
-            self.tts.setSpeechRate(float(rate))
+    def shutdown(self):
+        if self.tts and self.ready:
+            try:
+                self.tts.stop()
+                self.tts.shutdown()
+            except Exception:
+                pass
+            self.tts = None
+            self.ready = False
+            self.initialized = False
 
-    def set_pitch(self, pitch: float):
-        """Modifies voice frequency. Standard tone pitch baseline is 1.0."""
-        if self.is_android and self.initialized and self.tts:
-            self.tts.setPitch(float(pitch))
+    def set_rate(self, rate):
+        if self.tts and self.ready:
+            try:
+                self.tts.setSpeechRate(float(rate))
+            except Exception:
+                pass
+
+    def set_pitch(self, pitch):
+        if self.tts and self.ready:
+            try:
+                self.tts.setPitch(float(pitch))
+            except Exception:
+                pass
 
 
-def get_tts(on_ready_callback=None) -> AndroidTTS:
-    """Singleton creation utility guaranteeing a unique shared TTS engine structure."""
+# Existing imports can continue using the old class name.
+AndroidTTS = TTSEngine
+
+
+def get_tts(on_ready_callback=None):
+    """Return the app-wide TTS engine instance."""
     global _tts_instance
     if _tts_instance is None:
-        _tts_instance = AndroidTTS(on_ready_callback)
+        _tts_instance = TTSEngine(on_ready_callback)
     return _tts_instance
