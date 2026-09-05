@@ -602,7 +602,8 @@ We appreciate your feedback and look forward to improving the experience for eve
         notif.icon_name = "ic_lock_idle_alarm"
 
         if use_custom_sound:
-            notif.setSound(sound_path="alarmsound.mp3")
+            sound_path = os.path.join(os.path.dirname(__file__), "assets", "alarmsound.mp3")
+            notif.setSound(sound_path=sound_path)
         return notif
 
     def _send_notification_with_fallback(self, notif: Notification, body: str):
